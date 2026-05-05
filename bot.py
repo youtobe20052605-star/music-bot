@@ -7,36 +7,23 @@ from telegram.ext import (
     MessageHandler,
     CallbackQueryHandler,
     ContextTypes,
-    filters
+    filters,
 )
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-
-# Queue
-queue = {}
-
-# /start
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🎧 Ultimate Music Bot\n\n"
-        "/play nomi — tez yuklash\n"
-        "/search nomi — tanlab yuklash\n"
-        "/queue — navbatni ko‘rish\n"
-        "/skip — keyingi qo‘shiq"
-    )
 
 # download function
 def download_audio(query):
     ydl_opts = {
         'format': 'bestaudio/best',
-        'outtmpl': 'song.%(ext)s',
+        'outtmpl': '/tmp/%(title)s.%(ext)s',
         'quiet': True,
-        'noplaylist': False,
+        'noplaylist': True,
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '192',
-        }],
+        }]
     }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -51,7 +38,18 @@ def download_audio(query):
 
     return filename, title
 
-# /play
+
+# start
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🎧 Ultimate Music Bot\n\n"
+        "/play nomi — tez yuklash\n"
+        "/search nomi — tanlab yuklash\n"
+        "Link tashlasang ham ishlaydi (YouTube / TikTok)"
+    )
+
+
+# play
 async def play(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("Masalan:\n/play Eminem")
@@ -61,7 +59,7 @@ async def play(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text("⏳ Yuklanmoqda...")
 
     try:
-        filename, title = download_audio(f"ytsearch1:{query}")
+        filename, title = download_audio(f"ytsearch:{query}")
 
         with open(filename, 'rb') as audio:
             await update.message.reply_audio(audio=audio, title=title)
@@ -71,10 +69,10 @@ async def play(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ {e}")
 
-    finally:
-        await msg.delete()
+    await msg.delete()
 
-# /search inline
+
+# search (inline button)
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("Masalan:\n/search Eminem")
@@ -86,20 +84,18 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     info = ydl.extract_info(f"ytsearch5:{query}", download=False)
 
     buttons = []
-    for i, v in enumerate(info['entries']):
+    for i in info['entries']:
         buttons.append([
-            InlineKeyboardButton(
-                v['title'][:40],
-                callback_data=v['webpage_url']
-            )
+            InlineKeyboardButton(i['title'][:40], callback_data=i['webpage_url'])
         ])
 
     await update.message.reply_text(
-        "🔎 Tanlang:",
+        "🎵 Tanlang:",
         reply_markup=InlineKeyboardMarkup(buttons)
     )
 
-# inline click
+
+# button click
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -118,37 +114,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await query.message.reply_text(f"❌ {e}")
 
-    finally:
-        await msg.delete()
+    await msg.delete()
 
-# queue
-async def add_queue(chat_id, item):
-    if chat_id not in queue:
-        queue[chat_id] = []
-    queue[chat_id].append(item)
 
-# /queue
-async def show_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-
-    if chat_id not in queue or not queue[chat_id]:
-        await update.message.reply_text("Queue bo‘sh")
-        return
-
-    text = "\n".join([f"{i+1}. {q}" for i, q in enumerate(queue[chat_id])])
-    await update.message.reply_text("🎶 Queue:\n\n" + text)
-
-# /skip
-async def skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-
-    if chat_id in queue and queue[chat_id]:
-        queue[chat_id].pop(0)
-        await update.message.reply_text("⏭ Skip qilindi")
-    else:
-        await update.message.reply_text("Queue bo‘sh")
-
-# link handler (Spotify / TikTok / YouTube)
+# link handler (yt / tt / insta)
 async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text
 
@@ -168,8 +137,8 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ {e}")
 
-    finally:
-        await msg.delete()
+    await msg.delete()
+
 
 # main
 def main():
@@ -178,14 +147,13 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("play", play))
     app.add_handler(CommandHandler("search", search))
-    app.add_handler(CommandHandler("queue", show_queue))
-    app.add_handler(CommandHandler("skip", skip))
 
     app.add_handler(CallbackQueryHandler(button))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
 
-    print("🔥 Ultimate bot ishlayapti...")
+    print("🔥 Bot ishlayapti...")
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()
