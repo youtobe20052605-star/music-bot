@@ -1,166 +1,191 @@
-from telegram import Update
+import os
+import yt_dlp
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
-    ContextTypes,
     MessageHandler,
+    CallbackQueryHandler,
+    ContextTypes,
     filters
 )
-import yt_dlp
-import os
 
-# 🔹 Search natijalarni saqlash
-search_results = {}
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# 🔹 /start
+# Queue
+queue = {}
+
+# /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Bot ishlayapti ✅\n\n"
+        "🎧 Ultimate Music Bot\n\n"
         "/play nomi — tez yuklash\n"
-        "/search nomi — tanlab yuklash"
+        "/search nomi — tanlab yuklash\n"
+        "/queue — navbatni ko‘rish\n"
+        "/skip — keyingi qo‘shiq"
     )
 
-# 🔹 /play
+# download function
+def download_audio(query):
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'outtmpl': 'song.%(ext)s',
+        'quiet': True,
+        'noplaylist': False,
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }],
+    }
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(query, download=True)
+
+        if 'entries' in info:
+            info = info['entries'][0]
+
+        filename = ydl.prepare_filename(info)
+        filename = os.path.splitext(filename)[0] + ".mp3"
+        title = info.get('title', 'Music')
+
+    return filename, title
+
+# /play
 async def play(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("Masalan:\n/play Eminem Mockingbird")
+        await update.message.reply_text("Masalan:\n/play Eminem")
         return
 
     query = " ".join(context.args)
     msg = await update.message.reply_text("⏳ Yuklanmoqda...")
 
     try:
-        ydl_opts = {
-            'format': 'bestaudio/best',
-            'outtmpl': 'song.%(ext)s',
-            'quiet': True,
-            'noplaylist': True,
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
-            }]
-        }
-
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(f"ytsearch1:{query}", download=True)
-
-            if 'entries' in info:
-                info = info['entries'][0]
-
-            filename = ydl.prepare_filename(info)
-            filename = os.path.splitext(filename)[0] + ".mp3"
-            title = info.get('title', 'Music')
+        filename, title = download_audio(f"ytsearch1:{query}")
 
         with open(filename, 'rb') as audio:
-            await update.message.reply_audio(
-                audio=audio,
-                title=title,
-                performer="Music Bot 🎧"
-            )
+            await update.message.reply_audio(audio=audio, title=title)
 
         os.remove(filename)
 
     except Exception as e:
-        await update.message.reply_text(f"❌ Xatolik: {e}")
+        await update.message.reply_text(f"❌ {e}")
 
     finally:
         await msg.delete()
 
-
-# 🔍 /search
+# /search inline
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("Masalan:\n/search Eminem")
         return
 
     query = " ".join(context.args)
-    msg = await update.message.reply_text("🔍 Qidirilmoqda...")
+
+    ydl = yt_dlp.YoutubeDL({'quiet': True})
+    info = ydl.extract_info(f"ytsearch5:{query}", download=False)
+
+    buttons = []
+    for i, v in enumerate(info['entries']):
+        buttons.append([
+            InlineKeyboardButton(
+                v['title'][:40],
+                callback_data=v['webpage_url']
+            )
+        ])
+
+    await update.message.reply_text(
+        "🔎 Tanlang:",
+        reply_markup=InlineKeyboardMarkup(buttons)
+    )
+
+# inline click
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    url = query.data
+    msg = await query.message.reply_text("⏳ Yuklanmoqda...")
 
     try:
-        ydl_opts = {
-            'quiet': True,
-            'noplaylist': True
-        }
-
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(f"ytsearch5:{query}", download=False)
-
-        results = info['entries']
-        text = "🎵 Top 5 natija:\n\n"
-
-        for i, video in enumerate(results):
-            text += f"{i+1}. {video['title']}\n"
-
-        search_results[update.effective_user.id] = results
-
-        await msg.edit_text(text + "\n\n👉 Raqam yubor (1-5)")
-
-    except Exception as e:
-        await msg.edit_text(f"❌ Xatolik: {e}")
-
-
-# 🎯 Tanlash (1-5 yozsa)
-async def choose(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-
-    if user_id not in search_results:
-        return
-
-    if not update.message.text.isdigit():
-        return
-
-    index = int(update.message.text) - 1
-
-    if index < 0 or index >= 5:
-        return
-
-    video = search_results[user_id][index]
-    url = video['webpage_url']
-
-    msg = await update.message.reply_text("⏳ Yuklanmoqda...")
-
-    try:
-        ydl_opts = {
-            'format': 'bestaudio/best',
-            'outtmpl': 'song.%(ext)s',
-            'quiet': True,
-            'noplaylist': True,
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
-            }]
-        }
-
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-
-            filename = ydl.prepare_filename(info)
-            filename = os.path.splitext(filename)[0] + ".mp3"
+        filename, title = download_audio(url)
 
         with open(filename, 'rb') as audio:
-            await update.message.reply_audio(
-                audio=audio,
-                title=video['title'],
-                performer="Music Bot 🎧"
-            )
+            await query.message.reply_audio(audio=audio, title=title)
 
         os.remove(filename)
 
     except Exception as e:
-        await update.message.reply_text(f"❌ Xatolik: {e}")
+        await query.message.reply_text(f"❌ {e}")
 
     finally:
         await msg.delete()
 
+# queue
+async def add_queue(chat_id, item):
+    if chat_id not in queue:
+        queue[chat_id] = []
+    queue[chat_id].append(item)
 
-# 🔹 APP
-app = ApplicationBuilder().token("8710637373:AAGEPPuJe1ExB_9xAcTzkLCusJGiMrK9Y90").build()
+# /queue
+async def show_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
 
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("play", play))
-app.add_handler(CommandHandler("search", search))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, choose))
+    if chat_id not in queue or not queue[chat_id]:
+        await update.message.reply_text("Queue bo‘sh")
+        return
 
-app.run_polling()
+    text = "\n".join([f"{i+1}. {q}" for i, q in enumerate(queue[chat_id])])
+    await update.message.reply_text("🎶 Queue:\n\n" + text)
+
+# /skip
+async def skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+
+    if chat_id in queue and queue[chat_id]:
+        queue[chat_id].pop(0)
+        await update.message.reply_text("⏭ Skip qilindi")
+    else:
+        await update.message.reply_text("Queue bo‘sh")
+
+# link handler (Spotify / TikTok / YouTube)
+async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    url = update.message.text
+
+    if "http" not in url:
+        return
+
+    msg = await update.message.reply_text("⏳ Yuklanmoqda...")
+
+    try:
+        filename, title = download_audio(url)
+
+        with open(filename, 'rb') as audio:
+            await update.message.reply_audio(audio=audio, title=title)
+
+        os.remove(filename)
+
+    except Exception as e:
+        await update.message.reply_text(f"❌ {e}")
+
+    finally:
+        await msg.delete()
+
+# main
+def main():
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("play", play))
+    app.add_handler(CommandHandler("search", search))
+    app.add_handler(CommandHandler("queue", show_queue))
+    app.add_handler(CommandHandler("skip", skip))
+
+    app.add_handler(CallbackQueryHandler(button))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
+
+    print("🔥 Ultimate bot ishlayapti...")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
